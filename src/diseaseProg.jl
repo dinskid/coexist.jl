@@ -894,8 +894,8 @@ function (f::distTestsSymp)(
 
   # Calculate noncovid, but symptomatic people
   peopleSymp = deepcopy(people)
-  peopleSymp[1:min(symp_HS)-1, :] .*= noncovid_sympRatio
-  peopleSymp[max(symp_HS):end, :] .*= noncovid_sympRatio
+  peopleSymp[1:min(symp_HS...), :] .*= noncovid_sympRatio
+  peopleSymp[max(symp_HS...):end, :] .*= noncovid_sympRatio
 
   # Subtract already tested people
   if alreadyTestedRate != nothing
