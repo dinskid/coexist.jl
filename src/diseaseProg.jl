@@ -10,7 +10,7 @@ istransparent(::Any) = false
 istransparent(::CType) = true
 
 build_paramDict(m) = build_paramDict(m, Val(istransparent(m)))
-build_paramDict(m, ::Val{false}) = m
+build_paramDict(m, ::Val{false}) = () # Empty tuple (if no default args)
 function build_paramDict(m, ::Val{true})
     fields = fieldnames(typeof(m))
     NamedTuple{fields}(Tuple([build_paramDict(getfield(m, field)) for field in fields]))
@@ -831,4 +831,88 @@ function (f::trFunc_testCapacity)(
       ("Antigen", outAntiTotal*testCapacity_antigenratio_country),
       ("Antibody", outAntiTotal*(1-testCapacity_antigenratio_country))
   ]) # Tuples can be used instead (using dictionary to make it identical to python code
+end
+
+# Symptom parameters
+# ------------------
+
+
+# Estimating the baseline ILI-symptoms from earlier studies as well as the success rate of COVID-19 tests
+
+# ILI rate estimate from 2018-19 PHE Surveillance of influenza and other respiratory viruses in the UK report:
+# https://assets.publishing.service.gov.uk/government/uploads/system/uploads/attachment_data/file/839350/Surveillance_of_influenza_and_other_respiratory_viruses_in_the_UK_2018_to_2019-FINAL.pdf
+
+# TODO - get actual seasonal symptom rate predictions (from 2020 non-SARS respiratory viruses, this data surely exists)
+ # (daily rate estimate from Figure 8 of the report)
+
+
+# Respiratory diagnosis on hospital admissions (not just ILI, all, TODO - get only ILI?)
+# NHS Hosp episode statistics 2018-19, page 12 https://files.digital.nhs.uk/F2/E70669/hosp-epis-stat-admi-summ-rep-2018-19-rep.pdf
+# In hospital: 1.1 million respiratory episodes out of 17.1 million total episodes
+
+@with_kw mutable struct f_symptoms_nonCOVID
+  symptomsIliRCGP = 15./100000.0 # Symptom rate in general non-hospitalised population
+  symptomsRespInHospitalFAEs = 1.1/17.1 # Symptom rate in hospitalised population
+end
+
+function (f::f_symptoms_nonCOVID)(
+    realTime,
+    symptomsIliRCGP = 15./100000., # Symptom rate in general non-hospitalised population
+    symptomsRespInHospitalFAEs = 1.1/17.1; # Symptom rate in hospitalised population
+
+    kwargs...
+  )
+  f.symptomsRespInHospitalFAEs=symptomsRespInHospitalFAEs
+  f.symptomsIliRCGP=f.symptomsIliRCGP
+  """
+  This function defines the non-COVID ILI symptoms rate in the population at a given t time
+  """
+  # TODO, add extra data etc as input. For now:
+  return (symptomsIliRCGP, symptomsRespInHospitalFAEs)
+end
+
+# Distribute tests amongst (a given subset of) symptomatic people
+
+@with_kw mutable struct distTestsSymp
+  symp_HS=range(3,4;step=1)
+  alreadyTestedRate=nothing
+end
+
+function (f::distTestsSymp)(
+    people,
+    testsAvailable,
+    noncovid_sympRatio,
+    symp_HS = range(3,5;step=1),
+    alreadyTestedRate = nothing
+  )
+  """
+  distribute tests amongst symptomatic people
+  people is nAge x nHS-1 x ... (excluding dead)
+  """
+  f.symp_HS=symp_HS
+  f.alreadyTestedRate=alreadyTestedRate
+
+  # Calculate noncovid, but symptomatic people
+  peopleSymp = deepcopy(people)
+  peopleSymp[1:min(symp_HS)-1, :] .*= noncovid_sympRatio
+  peopleSymp[max(symp_HS):end, :] .*= noncovid_sympRatio
+
+  # Subtract already tested people
+  if alreadyTestedRate != nothing
+    peopleSymp .-= people*alreadyTestedRate
+  end
+
+  # Check if we already tested everyone with a different test
+  if sum(peopleSymp)<1e-6 # avoid numerical instabilities
+    return (0.0, 0.0)
+  end
+
+  testedRatio = min(1.0, testsAvailable./sum(peopleSymp))
+
+  return (
+    #test rate
+    testedRatio * (peopleSymp/(people+1e-6)), # avoid dividing by zero
+    # tests used to achieve this
+    testedRatio * sum(peopleSymp)
+  )
 end
