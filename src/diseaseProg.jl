@@ -6,7 +6,7 @@
 # But correspondingly I want people at lower risk to have more favorable outcome on average
 
 ## Build NamedTuple for params
-# TODO: Convert symbols to strings to handle kwargs
+# TODO: Check if this works for nested functions
 istransparent(::Any) = false
 istransparent(::CType) = true
 
@@ -962,7 +962,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
   # Testing capacity is testsAvailable
 
   # Get sympom ratio. [0] - general, [1] - hospitalised
-  cur_noncovid_sympRatio = f.f_symptoms_nonCOVID(realTime; kwargs["f_symptoms_nonCOVID_params"])
+  cur_noncovid_sympRatio = f.f_symptoms_nonCOVID(realTime; kwargs[:f_symptoms_nonCOVID]...)
 
   # PCR testing
   # -----------
@@ -1039,7 +1039,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
   out_testRate[findfirst(x->x=="Antigen", testTypes),1,3,1:end-1,:] .+= testRate
   testsAvaliable["Antigen"] .-= testsUsed
 
-  if distributeRemainingToRandom:
+  if distributeRemainingToRandom
     # Distribute antigen tests left over the other non-symptmatic populations
     _sum = sum(out_testRate[:,1,:,1:end-1,:];dims=1)
     testRate, testsUsed = f.distTestsSymp(
