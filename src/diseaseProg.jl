@@ -6,11 +6,12 @@
 # But correspondingly I want people at lower risk to have more favorable outcome on average
 
 ## Build NamedTuple for params
+# TODO: Convert symbols to strings to handle kwargs
 istransparent(::Any) = false
 istransparent(::CType) = true
 
 build_paramDict(m) = build_paramDict(m, Val(istransparent(m)))
-build_paramDict(m, ::Val{false}) = () # Empty tuple (if no default args)
+build_paramDict(m, ::Val{false}) = m # Empty tuple (if no default args)
 function build_paramDict(m, ::Val{true})
     fields = fieldnames(typeof(m))
     NamedTuple{fields}(Tuple([build_paramDict(getfield(m, field)) for field in fields]))
@@ -851,15 +852,14 @@ end
 # In hospital: 1.1 million respiratory episodes out of 17.1 million total episodes
 
 @with_kw mutable struct f_symptoms_nonCOVID
-  symptomsIliRCGP = 15./100000.0 # Symptom rate in general non-hospitalised population
+  symptomsIliRCGP = 15.0/100000.0 # Symptom rate in general non-hospitalised population
   symptomsRespInHospitalFAEs = 1.1/17.1 # Symptom rate in hospitalised population
 end
 
 function (f::f_symptoms_nonCOVID)(
     realTime,
-    symptomsIliRCGP = 15./100000., # Symptom rate in general non-hospitalised population
+    symptomsIliRCGP = 15.0/100000., # Symptom rate in general non-hospitalised population
     symptomsRespInHospitalFAEs = 1.1/17.1; # Symptom rate in hospitalised population
-
     kwargs...
   )
   f.symptomsRespInHospitalFAEs=symptomsRespInHospitalFAEs
@@ -911,8 +911,213 @@ function (f::distTestsSymp)(
 
   return (
     #test rate
-    testedRatio * (peopleSymp/(people+1e-6)), # avoid dividing by zero
+    testedRatio * (peopleSymp./(people.+1e-6)), # avoid dividing by zero
     # tests used to achieve this
     testedRatio * sum(peopleSymp)
   )
+end
+
+# Testing policies (how to distribute available tests)
+# ----------------------------------------------------
+
+# Estimate at any one time how many people are getting tested (with which tests) from which health states
+@with_kw mutable struct policyFunc_testing_symptomaticOnly
+  antibody_testing_policy="hospworker_then_random"
+  f_symptoms_nonCOVID=f_symptoms_nonCOVID()
+  distTestsSymp=distTestsSymp()
+  distributeRemainingToRandom=true
+  return_testsAvailable_remaining=false
+end
+
+function (f::policyFunc_testing_symptomaticOnly)(
+    stateTensor,
+    realTime,
+
+    # Test types (names correspoding to testSpecifications)
+    testTypes, # = ["PCR", "Antigen", "Antibody"],
+
+    # Test Capacity (dict with names above and numbers available on day t)
+    testsAvailable, # = trFunc_testCapacity(t)
+
+    # OPTIONAL ARGUMENTS (may be different for different policy functions, should come with defaults!)
+    antibody_testing_policy = "hospworker_then_random",
+    # This has these values (for now), {"none", "hospworker_then_random", "virus_positive_only", "virus_positive_only_hospworker_first"}
+
+    # Baseline symptoms
+    f_symptoms_nonCOVID = f_symptoms_nonCOVID(),
+
+    distributeRemainingToRandom = true,
+    return_testsAvailable_remaining = false;
+
+    kwargs...
+  )
+  """
+  Returns a rate distribution of available test types over age, health and isolation states
+  (although age assumed not to matter here)
+  """
+
+  # Output nAge x nHS x nIso x nTest x len(testTypes) tensor
+  out_testRate = zeros(reverse(size(stateTensor)+(length(testTypes), )))
+
+  # Testing capacity is testsAvailable
+
+  # Get sympom ratio. [0] - general, [1] - hospitalised
+  cur_noncovid_sympRatio = f.f_symptoms_nonCOVID(realTime; kwargs["f_symptoms_nonCOVID_params"])
+
+  # PCR testing
+  # -----------
+
+  # Hospitalised people get priority over PCR tests
+  testRate, testsUsed = f.distTestsSymp(
+    stateTensor[1,3,1:end-1,:], # hospitalised non-positive people, exclude tested and dead people
+    testsAvailable["PCR"],
+    cur_noncovid_sympRatio[2]
+  )
+
+  out_testRate[getindex("PCR"), 1, 3, 1:end-1, :] .+= testRate
+  testsAvailable["PCR"] .-= testsUsed
+
+  # Prioritise hospital workers next:
+  # TODO: check if we should do this? In UK policy there was a 15% max for hospital worker testing until ~2 April...
+  testRate, testsUsed = f.distTestsSymp(
+    stateTensor[1,4,1:end-1,:],
+    testsAvailable["PCR"],
+    cur_noncovid_sympRatio[1]
+  )
+
+  out_testRate[getindex("PCR"), 1, 4, 1:end-1, :] .+= testRate
+  testsAvailable["PCR"] .-= testsUsed
+
+  # Distribute PCRs left over the other populations
+  testRate, testsUsed = f.distTestsSymp(
+    tateTensor[1, 1:2, 1:end-1, :],
+    testsAvailable["PCR"],
+    cur_noncovid_sympRatio[1]
+  )
+
+  out_testRate[findfirst(x->x=="PCR", testTypes), 1, 1:2, 1:end-1, :] .+= testRate
+  testsAvailable["PCR"] .-= testsUsed
+
+  if distributeRemainingToRandom
+    # Distribute PCRs left over the other populations
+    testRAte, testsUsed = f.distTestsSymp(
+    	stateTensor[1,:,1:end-1,:],
+      testsAvailable["PCR"],
+      1.0,
+      f.distTestsSymp.symp_HS,
+      out_testRate[findfirst(x->x=="PCR", testTypes),1,:,1:end-1,:]
+    )
+    out_testRate[findfirst(x->x=="PCR", testTypes),1,:,1:end-1,:] .+= testRate
+    testsAvailable["PCR"] .-= testsUsed
+  end
+
+  # Antigen testing
+  # ---------------
+
+  # Hospitalised people get priority over PCR tests
+  testRate, testsUsed = f.distTestsSymp(
+    stateTensor[1,3,1:end-1,:], # hospitalised non-positive people, exclude tested and dead people
+    testsAvailable["Antigen"],
+    cur_noncovid_sympRatio[2],
+    f.distTestsSymp.symp_HS,
+    alreadyTestedRate=out_testRate[findfirst(x->x=="PCR", testTypes),1,3,1:end-1,:]
+  )
+
+  out_testRate[findfirst(x->x=="Antigen", testTypes),1,3,1:end-1,:] .+= testRate
+  testsAvailable["Antigen"] .-= testsUsed
+
+  # Prioritise hospital workers next:
+  # TODO: check if we should do this? In UK policy there was a 15% max for hospital worker testing until ~2 April...
+  testRate, testsUsed = f.distTestsSymp(
+    stateTensor[1,4,1:end-1,:],
+    testsAvailable["Antigen"],
+    cur_noncovid_sympRatio[1],
+    f.distTestsSymp.symp_HS,
+    alreadyTestedRate=out_testRate[findfirst(x->x=="PCR", testTypes),1,4,1:end-1,:]
+  )
+
+  out_testRate[findfirst(x->x=="Antigen", testTypes),1,3,1:end-1,:] .+= testRate
+  testsAvaliable["Antigen"] .-= testsUsed
+
+  if distributeRemainingToRandom:
+    # Distribute antigen tests left over the other non-symptmatic populations
+    _sum = sum(out_testRate[:,1,:,1:end-1,:];dims=1)
+    testRate, testsUsed = f.distTestsSymp(
+      stateTensor[1,:,1:end-1,:],
+      testsAvailable["Antigen"],
+      1.0,
+      f.distTestsSymp.symp_HS,
+      reshape(_sum, size(_sum)[2:end])
+    )
+
+    out_testRate[findfirst(x->x=="Antigen", testTypes), 1,:,1:end-1,:] .+= testRate
+    testsAvailable .-= testsUsed
+  end
+  # Antibody testing
+  # ----------------
+
+  if antibody_testing_policy == "hospworker_then_random"
+    # For now: give to hospital workers first, not taking into account previous tests or symptoms
+    testRate, testsUsed = f.distTestsSymp(
+      stateTensor[1:2,4,1:end-1,:],
+      testsAvailable["Antibody"],
+      1.0 # basically workers get antibody tested regardless of symptoms
+    )
+    out_testRate[findfirst(x->x=="Antibody", testTypes), 1:2, 4,1:end-1,:] .+= testRate
+    testsAvailable["Antibody"] .-= testsUsed
+
+    # Afterwards let's just distribute randomly in the rest of the population
+    testRate, testsUsed = f.distTestsSymp(
+      stateTensor[1:2,1:3,1:end-1,:],
+      testsAvailable["Antibody"],
+      1.0 # basically workers get antibody tested regardless of symptoms
+    )
+
+    out_testRate[findfirst(x->x=="Antibody", testTypes), 1:2, 1:3, 1:end-1,:] .+= testRate
+    testsAvailable["Antibody"] .-= testsUsed
+  end
+
+  if antibody_testing_policy == "virus_positive_only_hospworker_first"
+    # For now: give to hospital workers first, not taking into account previous tests or symptoms
+    testRate, testsUsed = f.distTestsSymp(
+      stateTensor[2,4,1:end-1,:],
+      testsAvailable["Antibody"],
+      1.0 # basically workers get antibody tested regardless of symptoms
+    )
+    out_testRate[findfirst(x->x=="Antibody", testTypes), 2,4,1:end-1,:] .+= testRate
+    testsAvailable["Antibody"] .-= testsUsed
+
+    # Afterwards let's just distribute randomly in the rest of the population
+    # TODO: Maybe prioratise people who tested positive for the virus before???
+    testRate, testsUsed = distTestsSymp(
+        stateTensor[2,1:3,1:end-1,:],
+        testsAvailable["Antibody"],
+        1.0 # basically people get antibody tested regardless of symptoms
+    )
+
+    out_testRate[findfirst(x->x=="Antibody"), 2,1:3,1:end-1,:] .+= testRate
+    testsAvailable["Antibody"] .-= testsUsed
+  end
+
+  if antibody_testing_policy == "virus_positive_only"
+    testRate, testsUsed = f.distTestsSymp(
+      stateTensor[2,:,1:end-1,:],
+      testsAvailable["Antibody"],
+      1.0 # basically people get antibody tested regardless of symptoms
+    )
+
+    out_testRate[findfirst(x->x=="Antibody"), 2,:,1:end-1,:] .+= testRate
+    testsAvailable["Antibody"] .-= testsUsed
+  end
+
+  if antibody_testing_policy == "none"
+    out_testRate .+= 0.0
+    testsAvailable["Antibody"] .-= 0.0
+  end
+
+  if return_testsAvailable_remaining
+    return out_testRate, testsAvailable
+  end
+
+  return out_testRate
 end
