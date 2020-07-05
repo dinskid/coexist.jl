@@ -956,8 +956,8 @@ function (f::policyFunc_testing_symptomaticOnly)(
   (although age assumed not to matter here)
   """
 
-  # Output nAge x nHS x nIso x nTest x len(testTypes) tensor
-  out_testRate = zeros(reverse(size(stateTensor)+(length(testTypes), )))
+  # Output nAge x nHS x nIso x nTest x len(testTypes) tensor in py
+  out_testRate = zeros(testTypes, size(stateTensor)...) # len(testTypes) x nTest x nIso x nHS x nAge in jl
 
   # Testing capacity is testsAvailable
 
@@ -974,7 +974,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
     cur_noncovid_sympRatio[2]
   )
 
-  out_testRate[getindex("PCR"), 1, 3, 1:end-1, :] .+= testRate
+  out_testRate[findfirst(x->x=="PCR", testTypes), 1, 3, 1:end-1, :] .+= testRate
   testsAvailable["PCR"] .-= testsUsed
 
   # Prioritise hospital workers next:
@@ -985,7 +985,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
     cur_noncovid_sympRatio[1]
   )
 
-  out_testRate[getindex("PCR"), 1, 4, 1:end-1, :] .+= testRate
+  out_testRate[findfirst(x->x=="PCR", testTypes), 1, 4, 1:end-1, :] .+= testRate
   testsAvailable["PCR"] .-= testsUsed
 
   # Distribute PCRs left over the other populations
