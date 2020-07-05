@@ -417,11 +417,11 @@ def inpFunc_testSpecifications(
     antibody_FNR_I1_to_R2 = np.array([0.99, 0.85, 0.8, 0.65, 0.3, 0.05]),
     antibody_FPR_S_to_I4 =  np.array([0.05, 0.04, 0.03, 0.02, 0.01])
     ):
-    
-    
+
+
     testSpecifications = pd.DataFrame(
     columns=["Name"],#, "Infection stage"],#, "Sensitivity", "Specificity"],
-    
+
     data = (
         ["PCR"] * nHS +
         ["Antigen"] * (nHS) +
@@ -438,7 +438,7 @@ def inpFunc_testSpecifications(
     testSpecifications['InputHealthState'] = list(np.tile(range(nHS),3))
 
     # These numbers below are "defaults" illustrating the concept, but are modified by the inputs!!!
-    
+
     testSpecifications['FalseNegativeRate'] = [ # ratio of positive (infected / immune) people missed by the test
         # For each health stage:
         #  S -> I1 (asymp) -> I2 (mild symp) -> I3 (symp, sick) -> I4 (symp, less sick) -> R1 / R2 (IgM, IgG avail) -> D
@@ -452,13 +452,13 @@ def inpFunc_testSpecifications(
         # Antibody
             0.,   0.99,           0.85,          0.8,                 0.65,              0.3, 0.05,  0.
     ]
-    
-    
+
+
     testSpecifications.loc[1:6,'FalseNegativeRate'] = PCR_FNR_I1_to_R2
     testSpecifications.loc[9:14,'FalseNegativeRate'] = antigen_FNR_I1_to_R2
     testSpecifications.loc[17:22,'FalseNegativeRate'] = antibody_FNR_I1_to_R2
-    
-    
+
+
 
     testSpecifications['FalsePositiveRate'] = [ # ratio of negative (non-infected or not immune) people deemed positive by the test
         # PCR
@@ -468,17 +468,17 @@ def inpFunc_testSpecifications(
         0.1, 0.,0.,0.,0., 0.1, 0.1, 0.,
 
         # Antibody
-        0.05, 0.04, 0.03, 0.02, 0.01, 0., 0., 0.        
+        0.05, 0.04, 0.03, 0.02, 0.01, 0., 0., 0.
     ]
-    
+
     testSpecifications.loc[0,'FalsePositiveRate'] = PCR_FPR
     testSpecifications.loc[5:6,'FalsePositiveRate'] = PCR_FPR
     testSpecifications.loc[8,'FalsePositiveRate'] = antigen_FPR
     testSpecifications.loc[13:14,'FalsePositiveRate'] = antigen_FPR
     testSpecifications.loc[16:20,'FalsePositiveRate'] = antibody_FPR_S_to_I4
-    
+
     name = testSpecifications['Name']
-    truePosHealthState = testSpecifications['TruePosHealthState']   
+    truePosHealthState = testSpecifications['TruePosHealthState']
     testSpecifications.drop(['Name', 'TruePosHealthState'], inplace=True, axis=1)
     testSpecifications = testSpecifications.to_numpy()
     name = name.to_numpy()
@@ -487,7 +487,7 @@ def inpFunc_testSpecifications(
 
 def trFunc_testCapacity(
     realTime, # time within simulation (day)
-    
+
     # PCR capacity - initial
     testCapacity_pcr_phe_total = 1e4,
     testCapacity_pcr_phe_inflexday = pd.to_datetime("2020-03-25", format="%Y-%m-%d"),
@@ -497,22 +497,22 @@ def trFunc_testCapacity(
     testCapacity_pcr_country_total = 1e5,
     testCapacity_pcr_country_inflexday = pd.to_datetime("2020-04-25", format="%Y-%m-%d"),
     testCapacity_pcr_country_inflexslope = 10,
-    
+
     # Antibody / antigen capacity
     testCapacity_antibody_country_firstday = pd.to_datetime("2020-04-25", format="%Y-%m-%d"),
-    
+
     testCapacity_antibody_country_total = 5e6,
     testCapacity_antibody_country_inflexday = pd.to_datetime("2020-05-20", format="%Y-%m-%d"),
     testCapacity_antibody_country_inflexslope = 20,
-    
+
     testCapacity_antigenratio_country = 0.7,
-    
+
     **kwargs
-             
+
 ):
 
     # Returns a dictionary with test names and number available at day "t"
-    
+
     outPCR = (
         #phe phase
         testCapacity_pcr_phe_total * expit((realTime-testCapacity_pcr_phe_inflexday).days/testCapacity_pcr_phe_inflexslope)
@@ -520,18 +520,18 @@ def trFunc_testCapacity(
         #whole country phase
         testCapacity_pcr_country_total * expit((realTime-testCapacity_pcr_country_inflexday).days/testCapacity_pcr_country_inflexslope)
     )
-    
-    
+
+
     if realTime<testCapacity_antibody_country_firstday:
         outAntiTotal = 0.
     else:
         outAntiTotal = (
             testCapacity_antibody_country_total * expit((realTime-testCapacity_antibody_country_inflexday).days/testCapacity_antibody_country_inflexslope)
         )
-    
+
     return {
         "PCR": outPCR,
-        "Antigen": outAntiTotal*testCapacity_antigenratio_country, 
+        "Antigen": outAntiTotal*testCapacity_antigenratio_country,
         "Antibody": outAntiTotal*(1-testCapacity_antigenratio_country)
     }
 
@@ -823,3 +823,276 @@ state = 50*np.ones(9*8*4*4)
 out, _trTensor_diseaseProgression, _einsum4_test, \
     _einsum5_test, _einsum5_test1, _einsum9_test, _einsum9_test1 \
         = dydt_Complete(0, state, **paramDict_current)
+
+def f_symptoms_nonCOVID(
+    realTime,
+    symptomsIliRCGP = 15./100000., # Symptom rate in general non-hospitalised population
+    symptomsRespInHospitalFAEs = 1.1/17.1, # Symptom rate in hospitalised population
+
+    **kwargs):
+    """
+    This function defines the non-COVID ILI symptoms rate in the population at a given t time
+    """
+
+
+    # TODO, add extra data etc as input. For now:
+    return (symptomsIliRCGP, symptomsRespInHospitalFAEs)
+
+
+
+# In[18]:
+
+
+# Distribute tests amongst (a given subset of) symptomatic people
+def distTestsSymp(people, testsAvailable, noncovid_sympRatio, symp_HS = range(3,5), alreadyTestedRate = None):
+    """
+    distribute tests amongst symptomatic people
+    people is nAge x nHS-1 x ... (excluding dead)
+    """
+
+    # Calculate noncovid, but symptomatic people
+    peopleSymp = copy.deepcopy(people)
+    peopleSymp[:, :min(symp_HS)] *= noncovid_sympRatio
+    peopleSymp[:, max(symp_HS):] *= noncovid_sympRatio
+
+    # Subtract already tested people
+    if alreadyTestedRate is not None:
+        peopleSymp -= people*alreadyTestedRate
+
+
+
+
+    # Check if we already tested everyone with a different test
+    if np.sum(peopleSymp)<1e-6:  # avoid numerical instabilities
+        return (0.,0.)
+
+    testedRatio = min(1., testsAvailable/np.sum(peopleSymp))
+
+
+    return (
+        # test rate
+        testedRatio * (peopleSymp/(people+1e-6)), # avoid dividing by zero
+        # tests used to achieve this
+        testedRatio * np.sum(peopleSymp)
+    )
+
+
+# In[19]:
+
+
+# Testing policies (how to distribute available tests)
+# ----------------------------------------------------
+
+# Estimate at any one time how many people are getting tested (with which tests) from which health states
+def policyFunc_testing_symptomaticOnly(
+    stateTensor,
+    realTime,
+
+    # Test types (names correspoding to testSpecifications)
+    testTypes, # = ["PCR", "Antigen", "Antibody"],
+
+    # Test Capacity (dict with names above and numbers available on day t)
+    testsAvailable, # = trFunc_testCapacity(t)
+
+    # OPTIONAL ARGUMENTS (may be different for different policy functions, should come with defaults!)
+    antibody_testing_policy = "hospworker_then_random",
+    # This has these values (for now), {"none", "hospworker_then_random", "virus_positive_only", "virus_positive_only_hospworker_first"}
+
+    # Baseline symptoms
+    f_symptoms_nonCOVID = f_symptoms_nonCOVID,
+
+    distributeRemainingToRandom = True,
+    return_testsAvailable_remaining = False,
+
+    **kwargs
+    ):
+    """
+    Returns a rate distribution of available test types over age, health and isolation states
+    (although age assumed not to matter here)
+    """
+
+    # Output nAge x nHS x nIso x nTest x len(testTypes) tensor
+    out_testRate = np.zeros(stateTensor.shape+(len(testTypes),))
+
+    # Testing capacity is testsAvailable
+
+    # Get sympom ratio. [0] - general, [1] - hospitalised
+    cur_noncovid_sympRatio = f_symptoms_nonCOVID(realTime, **kwargs["f_symptoms_nonCOVID_params"])
+
+    # PCR testing
+    # -----------
+
+    # Hospitalised people get priority over PCR tests
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,2,0], # hospitalised non-positive people, exclude tested and dead people
+        testsAvailable = testsAvailable["PCR"],
+        noncovid_sympRatio = cur_noncovid_sympRatio[1]
+    )
+
+    out_testRate[:,:-1,2,0, testTypes.index("PCR")] += testRate
+    testsAvailable["PCR"] -= testsUsed
+
+    # Prioritise hospital workers next:
+    # TODO: check if we should do this? In UK policy there was a 15% max for hospital worker testing until ~2 April...
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,3,0],
+        testsAvailable = testsAvailable["PCR"],
+        noncovid_sympRatio= cur_noncovid_sympRatio[0]
+    )
+
+    out_testRate[:,:-1,3,0, testTypes.index("PCR")] += testRate
+    testsAvailable["PCR"] -= testsUsed
+
+    # Distribute PCRs left over the other populations
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,:2,0],
+        testsAvailable = testsAvailable["PCR"],
+        noncovid_sympRatio= cur_noncovid_sympRatio[0]
+    )
+
+    out_testRate[:,:-1,:2,0, testTypes.index("PCR")] += testRate
+    testsAvailable["PCR"] -= testsUsed
+
+    if distributeRemainingToRandom:
+        # Distribute PCRs left over the other populations
+        testRate, testsUsed = distTestsSymp(
+            people = stateTensor[:,:-1,:,0],
+            testsAvailable = testsAvailable["PCR"],
+            noncovid_sympRatio= 1.,
+            alreadyTestedRate= out_testRate[:,:-1,:,0, testTypes.index("PCR")]
+        )
+
+        out_testRate[:,:-1,:,0, testTypes.index("PCR")] += testRate
+        testsAvailable["PCR"] -= testsUsed
+
+
+    # Antigen testing
+    # ---------------
+
+    # Hospitalised people get priority over PCR tests
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,2,0], # hospitalised non-positive people, exclude tested and dead people
+        testsAvailable = testsAvailable["Antigen"],
+        noncovid_sympRatio= cur_noncovid_sympRatio[1],
+        alreadyTestedRate=out_testRate[:,:-1,2, 0, testTypes.index("PCR")]
+    )
+
+    out_testRate[:,:-1,2,0, testTypes.index("Antigen")] += testRate
+    testsAvailable["Antigen"] -= testsUsed
+
+    # Prioritise hospital workers next:
+    # TODO: check if we should do this? In UK policy there was a 15% max for hospital worker testing until ~2 April...
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,3,0],
+        testsAvailable = testsAvailable["Antigen"],
+        noncovid_sympRatio= cur_noncovid_sympRatio[0],
+        alreadyTestedRate=out_testRate[:,:-1,3, 0, testTypes.index("PCR")]
+    )
+
+    out_testRate[:,:-1,3,0, testTypes.index("Antigen")] += testRate
+    testsAvailable["Antigen"] -= testsUsed
+
+    # Distribute Antigen tests left over the other symptomatic people
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,:2,0],
+        testsAvailable = testsAvailable["Antigen"],
+        noncovid_sympRatio= cur_noncovid_sympRatio[0],
+        alreadyTestedRate=out_testRate[:,:-1,:2, 0, testTypes.index("PCR")]
+    )
+
+    out_testRate[:,:-1,:2,0, testTypes.index("Antigen")] += testRate
+    testsAvailable["Antigen"] -= testsUsed
+
+    if distributeRemainingToRandom:
+        # Distribute antigen tests left over the other non-symptmatic populations
+        testRate, testsUsed = distTestsSymp(
+            people = stateTensor[:,:-1,:,0],
+            testsAvailable = testsAvailable["Antigen"],
+            noncovid_sympRatio= 1.,
+            alreadyTestedRate= out_testRate[:,:-1,:,0, :].sum(-1)
+        )
+
+        out_testRate[:,:-1,:,0, testTypes.index("Antigen")] += testRate
+        testsAvailable["Antigen"] -= testsUsed
+
+
+    # Antibody testing
+    # ----------------
+
+    if antibody_testing_policy == "hospworker_then_random":
+
+        # For now: give to hospital workers first, not taking into account previous tests or symptoms
+        testRate, testsUsed = distTestsSymp(
+            people = stateTensor[:,:-1,3,:2],
+            testsAvailable = testsAvailable["Antibody"],
+            noncovid_sympRatio= 1. # basically workers get antibody tested regardless of symptoms
+        )
+
+        out_testRate[:,:-1,3,:2, testTypes.index("Antibody")] += testRate
+        testsAvailable["Antibody"] -= testsUsed
+
+        # Afterwards let's just distribute randomly in the rest of the population
+        testRate, testsUsed = distTestsSymp(
+            people = stateTensor[:,:-1,:3,:2],
+            testsAvailable = testsAvailable["Antibody"],
+            noncovid_sympRatio= 1. # basically people get antibody tested regardless of symptoms
+        )
+
+        out_testRate[:,:-1,:3,:2, testTypes.index("Antibody")] += testRate
+        testsAvailable["Antibody"] -= testsUsed
+
+    if antibody_testing_policy == "virus_positive_only_hospworker_first":
+
+        # For now: give to hospital workers first, not taking into account previous tests or symptoms
+        testRate, testsUsed = distTestsSymp(
+            people = stateTensor[:,:-1,3,1],
+            testsAvailable = testsAvailable["Antibody"],
+            noncovid_sympRatio= 1. # basically workers get antibody tested regardless of symptoms
+        )
+
+        out_testRate[:,:-1,3,1, testTypes.index("Antibody")] += testRate
+        testsAvailable["Antibody"] -= testsUsed
+
+        # Afterwards let's just distribute randomly in the rest of the population
+        # TODO: Maybe prioratise people who tested positive for the virus before???
+        testRate, testsUsed = distTestsSymp(
+            people = stateTensor[:,:-1,:3,1],
+            testsAvailable = testsAvailable["Antibody"],
+            noncovid_sympRatio= 1. # basically people get antibody tested regardless of symptoms
+        )
+
+        out_testRate[:,:-1,:3,1, testTypes.index("Antibody")] += testRate
+        testsAvailable["Antibody"] -= testsUsed
+
+
+    if antibody_testing_policy == "virus_positive_only":
+
+        testRate, testsUsed = distTestsSymp(
+            people = stateTensor[:,:-1,:,1],
+            testsAvailable = testsAvailable["Antibody"],
+            noncovid_sympRatio= 1. # basically people get antibody tested regardless of symptoms
+        )
+
+        out_testRate[:,:-1,:,1, testTypes.index("Antibody")] += testRate
+        testsAvailable["Antibody"] -= testsUsed
+
+    if antibody_testing_policy == "none":
+        out_testRate += 0.
+        testsAvailable["Antibody"] -= 0.
+
+
+
+    if return_testsAvailable_remaining:
+        return out_testRate, testsAvailable
+
+    return out_testRate
+
+__policyFunc_testing_symptomaticOnly = policyFunc_testing_symptomaticOnly(
+  stateTensor,
+  py_rTime,
+  ["PCR", "Antigen", "Antibody"],
+  trFunc_testCapacity(py_rTime),
+  **build_paramDict(policyFunc_testing_symptomaticOnly)
+)
+
+__policyFunc_testing_symptomaticOnly = np.transpose(__policyFunc_testing_symptomaticOnly)

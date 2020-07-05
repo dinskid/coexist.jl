@@ -44,6 +44,14 @@ other = select(other, Not(:Name))
 other = select(other, Not(:TruePosHealthState))
 other = convert(Array, other)
 
+# `policyFunc_testing_symptomaticOnly`
+_policyFunc_testing_symptomaticOnly = py"__policyFunc_testing_symptomaticOnly"
+policyFunc_testing_symptomaticOnly = Coexist.policyFunc_testing_symptomaticOnly()(
+  Coexist.stateTensor, rTime, ["PCR", "Antigen", "Antibody"],
+  Coexist.trFunc_testCapacity()(rTime);
+  Coexist.build_paramDict(Coexist.policyFunc_testing_symptomaticOnly())...
+)
+
 # End of setup
 
 @testset "DiseaseProg & HospitalAdmission" begin
@@ -69,4 +77,6 @@ other = convert(Array, other)
 	py"np.matmul(ageSocialMixingBaseline-ageSocialMixingDistancing,np.einsum('ijk,j->ik',stateTensor[:,1:(4+1),3,2:], transmissionInfectionStage))"
 	@test py"trFunc_newInfections_Complete(stateTensor=stateTensor,policySocialDistancing=False, policyImmunityPassports=True)"≈
 	permutedims(Coexist.trFunc_newInfections_Complete()(Coexist.stateTensor,false,true;initial_state...),[3,2,1])
+
+  @test _policyFunc_testing_symptomaticOnly ≈ policyFunc_testing_symptomaticOnly
 end
