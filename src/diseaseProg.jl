@@ -851,7 +851,7 @@ end
 # NHS Hosp episode statistics 2018-19, page 12 https://files.digital.nhs.uk/F2/E70669/hosp-epis-stat-admi-summ-rep-2018-19-rep.pdf
 # In hospital: 1.1 million respiratory episodes out of 17.1 million total episodes
 
-@with_kw mutable struct f_symptoms_nonCOVID
+@with_kw mutable struct f_symptoms_nonCOVID <: CType
   symptomsIliRCGP = 15.0/100000.0 # Symptom rate in general non-hospitalised population
   symptomsRespInHospitalFAEs = 1.1/17.1 # Symptom rate in hospitalised population
 end
@@ -873,7 +873,7 @@ end
 
 # Distribute tests amongst (a given subset of) symptomatic people
 
-@with_kw mutable struct distTestsSymp
+@with_kw mutable struct distTestsSymp <: CType
   symp_HS=range(3,4;step=1)
   alreadyTestedRate=nothing
 end
@@ -894,12 +894,14 @@ function (f::distTestsSymp)(
 
   # Calculate noncovid, but symptomatic people
   peopleSymp = deepcopy(people)
-  peopleSymp[1:min(symp_HS...), :] .*= noncovid_sympRatio
-  peopleSymp[max(symp_HS...):end, :] .*= noncovid_sympRatio
+  # println(size(people), size(peopleSymp))
+
+  peopleSymp[repeat([:], length(size(peopleSymp))-2)...,1:min(symp_HS...),:] .*= noncovid_sympRatio
+  peopleSymp[repeat([:], length(size(peopleSymp))-2)...,max(symp_HS...):end,:] .*= noncovid_sympRatio
 
   # Subtract already tested people
   if alreadyTestedRate != nothing
-    peopleSymp .-= people*alreadyTestedRate
+    peopleSymp .-= people.*alreadyTestedRate
   end
 
   # Check if we already tested everyone with a different test
@@ -921,7 +923,7 @@ end
 # ----------------------------------------------------
 
 # Estimate at any one time how many people are getting tested (with which tests) from which health states
-@with_kw mutable struct policyFunc_testing_symptomaticOnly
+@with_kw mutable struct policyFunc_testing_symptomaticOnly <: CType
   antibody_testing_policy="hospworker_then_random"
   f_symptoms_nonCOVID=f_symptoms_nonCOVID()
   distTestsSymp=distTestsSymp()
@@ -957,7 +959,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
   """
 
   # Output nAge x nHS x nIso x nTest x len(testTypes) tensor in py
-  out_testRate = zeros(testTypes, size(stateTensor)...) # len(testTypes) x nTest x nIso x nHS x nAge in jl
+  out_testRate = zeros(length(testTypes), size(stateTensor)...) # len(testTypes) x nTest x nIso x nHS x nAge in jl
 
   # Testing capacity is testsAvailable
 
@@ -975,7 +977,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
   )
 
   out_testRate[findfirst(x->x=="PCR", testTypes), 1, 3, 1:end-1, :] .+= testRate
-  testsAvailable["PCR"] .-= testsUsed
+  testsAvailable["PCR"] -= testsUsed
 
   # Prioritise hospital workers next:
   # TODO: check if we should do this? In UK policy there was a 15% max for hospital worker testing until ~2 April...
@@ -986,21 +988,21 @@ function (f::policyFunc_testing_symptomaticOnly)(
   )
 
   out_testRate[findfirst(x->x=="PCR", testTypes), 1, 4, 1:end-1, :] .+= testRate
-  testsAvailable["PCR"] .-= testsUsed
-
+  testsAvailable["PCR"] -= testsUsed
+  println(size(stateTensor[1, 1:2, 1:end-1, :]))
   # Distribute PCRs left over the other populations
   testRate, testsUsed = f.distTestsSymp(
-    tateTensor[1, 1:2, 1:end-1, :],
+    stateTensor[1, 1:2, 1:end-1, :],
     testsAvailable["PCR"],
     cur_noncovid_sympRatio[1]
   )
 
   out_testRate[findfirst(x->x=="PCR", testTypes), 1, 1:2, 1:end-1, :] .+= testRate
-  testsAvailable["PCR"] .-= testsUsed
+  testsAvailable["PCR"] -= testsUsed
 
   if distributeRemainingToRandom
     # Distribute PCRs left over the other populations
-    testRAte, testsUsed = f.distTestsSymp(
+    testRate, testsUsed = f.distTestsSymp(
     	stateTensor[1,:,1:end-1,:],
       testsAvailable["PCR"],
       1.0,
@@ -1008,7 +1010,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
       out_testRate[findfirst(x->x=="PCR", testTypes),1,:,1:end-1,:]
     )
     out_testRate[findfirst(x->x=="PCR", testTypes),1,:,1:end-1,:] .+= testRate
-    testsAvailable["PCR"] .-= testsUsed
+    testsAvailable["PCR"] -= testsUsed
   end
 
   # Antigen testing
@@ -1020,11 +1022,11 @@ function (f::policyFunc_testing_symptomaticOnly)(
     testsAvailable["Antigen"],
     cur_noncovid_sympRatio[2],
     f.distTestsSymp.symp_HS,
-    alreadyTestedRate=out_testRate[findfirst(x->x=="PCR", testTypes),1,3,1:end-1,:]
+    out_testRate[findfirst(x->x=="PCR", testTypes),1,3,1:end-1,:]
   )
 
   out_testRate[findfirst(x->x=="Antigen", testTypes),1,3,1:end-1,:] .+= testRate
-  testsAvailable["Antigen"] .-= testsUsed
+  testsAvailable["Antigen"] -= testsUsed
 
   # Prioritise hospital workers next:
   # TODO: check if we should do this? In UK policy there was a 15% max for hospital worker testing until ~2 April...
@@ -1033,11 +1035,11 @@ function (f::policyFunc_testing_symptomaticOnly)(
     testsAvailable["Antigen"],
     cur_noncovid_sympRatio[1],
     f.distTestsSymp.symp_HS,
-    alreadyTestedRate=out_testRate[findfirst(x->x=="PCR", testTypes),1,4,1:end-1,:]
+    out_testRate[findfirst(x->x=="PCR", testTypes),1,4,1:end-1,:]
   )
 
   out_testRate[findfirst(x->x=="Antigen", testTypes),1,3,1:end-1,:] .+= testRate
-  testsAvaliable["Antigen"] .-= testsUsed
+  testsAvailable["Antigen"] -= testsUsed
 
   if distributeRemainingToRandom
     # Distribute antigen tests left over the other non-symptmatic populations
@@ -1051,7 +1053,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
     )
 
     out_testRate[findfirst(x->x=="Antigen", testTypes), 1,:,1:end-1,:] .+= testRate
-    testsAvailable .-= testsUsed
+    testsAvailable["Antigen"] -= testsUsed
   end
   # Antibody testing
   # ----------------
@@ -1064,7 +1066,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
       1.0 # basically workers get antibody tested regardless of symptoms
     )
     out_testRate[findfirst(x->x=="Antibody", testTypes), 1:2, 4,1:end-1,:] .+= testRate
-    testsAvailable["Antibody"] .-= testsUsed
+    testsAvailable["Antibody"] -= testsUsed
 
     # Afterwards let's just distribute randomly in the rest of the population
     testRate, testsUsed = f.distTestsSymp(
@@ -1074,7 +1076,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
     )
 
     out_testRate[findfirst(x->x=="Antibody", testTypes), 1:2, 1:3, 1:end-1,:] .+= testRate
-    testsAvailable["Antibody"] .-= testsUsed
+    testsAvailable["Antibody"] -= testsUsed
   end
 
   if antibody_testing_policy == "virus_positive_only_hospworker_first"
@@ -1085,7 +1087,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
       1.0 # basically workers get antibody tested regardless of symptoms
     )
     out_testRate[findfirst(x->x=="Antibody", testTypes), 2,4,1:end-1,:] .+= testRate
-    testsAvailable["Antibody"] .-= testsUsed
+    testsAvailable["Antibody"] -= testsUsed
 
     # Afterwards let's just distribute randomly in the rest of the population
     # TODO: Maybe prioratise people who tested positive for the virus before???
@@ -1096,7 +1098,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
     )
 
     out_testRate[findfirst(x->x=="Antibody"), 2,1:3,1:end-1,:] .+= testRate
-    testsAvailable["Antibody"] .-= testsUsed
+    testsAvailable["Antibody"] -= testsUsed
   end
 
   if antibody_testing_policy == "virus_positive_only"
@@ -1107,7 +1109,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
     )
 
     out_testRate[findfirst(x->x=="Antibody"), 2,:,1:end-1,:] .+= testRate
-    testsAvailable["Antibody"] .-= testsUsed
+    testsAvailable["Antibody"] -= testsUsed
   end
 
   if antibody_testing_policy == "none"
