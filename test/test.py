@@ -910,7 +910,7 @@ def policyFunc_testing_symptomaticOnly(
     Returns a rate distribution of available test types over age, health and isolation states
     (although age assumed not to matter here)
     """
-
+    
     # Output nAge x nHS x nIso x nTest x len(testTypes) tensor
     out_testRate = np.zeros(stateTensor.shape+(len(testTypes),))
 

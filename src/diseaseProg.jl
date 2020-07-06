@@ -1024,7 +1024,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
 
   out_testRate[findfirst(x->x=="PCR", testTypes), 1, 4, 1:end-1, :] .+= testRate
   testsAvailable["PCR"] -= testsUsed
-  # println(size(stateTensor[1, 1:2, 1:end-1, :]))
+
   # Distribute PCRs left over the other populations
   testRate, testsUsed = f.distTestsSymp(
     stateTensor[1, 1:2, 1:end-1, :],
@@ -1100,6 +1100,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
       testsAvailable["Antibody"],
       1.0 # basically workers get antibody tested regardless of symptoms
     )
+
     out_testRate[findfirst(x->x=="Antibody", testTypes), 1:2, 4,1:end-1,:] .+= testRate
     testsAvailable["Antibody"] -= testsUsed
 
@@ -1121,6 +1122,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
       testsAvailable["Antibody"],
       1.0 # basically workers get antibody tested regardless of symptoms
     )
+
     out_testRate[findfirst(x->x=="Antibody", testTypes), 2,4,1:end-1,:] .+= testRate
     testsAvailable["Antibody"] -= testsUsed
 
