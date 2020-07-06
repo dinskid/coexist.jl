@@ -6,15 +6,15 @@
 # But correspondingly I want people at lower risk to have more favorable outcome on average
 
 ## Build NamedTuple for params
-# TODO: Check if this works for nested functions
+# TODO: Support for struct instances as kwargs
 istransparent(::Any) = false
 istransparent(::CType) = true
 
 build_paramDict(m) = build_paramDict(m, Val(istransparent(m)))
 build_paramDict(m, ::Val{false}) = m # Empty tuple (if no default args)
 function build_paramDict(m, ::Val{true})
-    fields = fieldnames(typeof(m))
-    NamedTuple{fields}(Tuple([build_paramDict(getfield(m, field)) for field in fields]))
+  fields = fieldnames(typeof(m))
+  NamedTuple{fields}(Tuple([build_paramDict(getfield(m, field)) for field in fields]))
 end
 
 # For calculations see data_cleaning_py.ipynb, calculations from NHS England dataset as per 05 Apr
@@ -883,7 +883,8 @@ function (f::distTestsSymp)(
     testsAvailable,
     noncovid_sympRatio,
     symp_HS = range(3,5;step=1),
-    alreadyTestedRate = nothing
+    alreadyTestedRate = nothing;
+    kwargs...
   )
   """
   distribute tests amongst symptomatic people
@@ -891,6 +892,13 @@ function (f::distTestsSymp)(
   """
   f.symp_HS=symp_HS
   f.alreadyTestedRate=alreadyTestedRate
+  kwargs_keys = keys(kwargs)
+  if symp_HS in kwargs_keys
+    f.symp_HS = kwargs[:symp_HS]
+  end
+  if alreadyTestedRate in kwargs_keys
+    f.alreadyTestedRate = kwargs[:alreadyTestedRate]
+  end
 
   # Calculate noncovid, but symptomatic people
   peopleSymp = deepcopy(people)
@@ -953,6 +961,33 @@ function (f::policyFunc_testing_symptomaticOnly)(
 
     kwargs...
   )
+  ## Basically, they can pass the default argument however they want
+  # as an argument while calling the function or as a kwarg
+  f.f_symptoms_nonCOVID = f_symptoms_nonCOVID
+  f.distributeRemainingToRandom = distributeRemainingToRandom
+  f.return_testsAvailable_remaining = return_testsAvailable_remaining
+  f.antibody_testing_policy = antibody_testing_policy
+
+  kwargs_keys = keys(kwargs)
+  if :antibody_testing_policy in kwargs_keys
+    f.antibody_testing_policy = kwargs[:antibody_testing_policy]
+  end
+  # if kwargs[:f_symptoms_nonCOVID] != nothing
+  #   # Note here they have to pass an instance of the struct
+  #   f.f_symptoms_nonCOVID = kwargs[:f_symptoms_nonCOVID_params]
+  # end
+  # if kwargs[:distTestsSymp] != nothing
+  #   # Note here they have to pass an instance of the struct
+  #   f.distTestsSymp = kwargs[:distTestsSymp]
+  # end
+  if :distributeRemainingToRandom in kwargs_keys
+    f.distributeRemainingToRandom = kwargs[:distributeRemainingToRandom]
+    println(kwargs[:distributeRemainingToRandom], ' ', f.distributeRemainingToRandom)
+  end
+  if :return_testsAvailable_remaining in kwargs_keys
+    f.return_testsAvailable_remaining = kwargs[:return_testsAvailable_remaining]
+  end
+
   """
   Returns a rate distribution of available test types over age, health and isolation states
   (although age assumed not to matter here)
@@ -989,7 +1024,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
 
   out_testRate[findfirst(x->x=="PCR", testTypes), 1, 4, 1:end-1, :] .+= testRate
   testsAvailable["PCR"] -= testsUsed
-  println(size(stateTensor[1, 1:2, 1:end-1, :]))
+  # println(size(stateTensor[1, 1:2, 1:end-1, :]))
   # Distribute PCRs left over the other populations
   testRate, testsUsed = f.distTestsSymp(
     stateTensor[1, 1:2, 1:end-1, :],
@@ -1000,7 +1035,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
   out_testRate[findfirst(x->x=="PCR", testTypes), 1, 1:2, 1:end-1, :] .+= testRate
   testsAvailable["PCR"] -= testsUsed
 
-  if distributeRemainingToRandom
+  if f.distributeRemainingToRandom
     # Distribute PCRs left over the other populations
     testRate, testsUsed = f.distTestsSymp(
     	stateTensor[1,:,1:end-1,:],
@@ -1041,7 +1076,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
   out_testRate[findfirst(x->x=="Antigen", testTypes),1,3,1:end-1,:] .+= testRate
   testsAvailable["Antigen"] -= testsUsed
 
-  if distributeRemainingToRandom
+  if f.distributeRemainingToRandom
     # Distribute antigen tests left over the other non-symptmatic populations
     _sum = sum(out_testRate[:,1,:,1:end-1,:];dims=1)
     testRate, testsUsed = f.distTestsSymp(
@@ -1058,7 +1093,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
   # Antibody testing
   # ----------------
 
-  if antibody_testing_policy == "hospworker_then_random"
+  if f.antibody_testing_policy == "hospworker_then_random"
     # For now: give to hospital workers first, not taking into account previous tests or symptoms
     testRate, testsUsed = f.distTestsSymp(
       stateTensor[1:2,4,1:end-1,:],
@@ -1079,7 +1114,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
     testsAvailable["Antibody"] -= testsUsed
   end
 
-  if antibody_testing_policy == "virus_positive_only_hospworker_first"
+  if f.antibody_testing_policy == "virus_positive_only_hospworker_first"
     # For now: give to hospital workers first, not taking into account previous tests or symptoms
     testRate, testsUsed = f.distTestsSymp(
       stateTensor[2,4,1:end-1,:],
@@ -1101,7 +1136,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
     testsAvailable["Antibody"] -= testsUsed
   end
 
-  if antibody_testing_policy == "virus_positive_only"
+  if f.antibody_testing_policy == "virus_positive_only"
     testRate, testsUsed = f.distTestsSymp(
       stateTensor[2,:,1:end-1,:],
       testsAvailable["Antibody"],
@@ -1112,14 +1147,154 @@ function (f::policyFunc_testing_symptomaticOnly)(
     testsAvailable["Antibody"] -= testsUsed
   end
 
-  if antibody_testing_policy == "none"
+  if f.antibody_testing_policy == "none"
     out_testRate .+= 0.0
-    testsAvailable["Antibody"] .-= 0.0
+    testsAvailable["Antibody"] -= 0.0
   end
 
-  if return_testsAvailable_remaining
+  if f.return_testsAvailable_remaining
+    return out_testRate, testsAvailable
+  end
+  return out_testRate
+end
+
+# Define reTesting policy(s) (ie give tests to people in non-0 test states!)
+@with_kw mutable struct policyFunc_testing_massTesting_with_reTesting <: CType
+  basic_policyFunc = policyFunc_testing_symptomaticOnly()
+  retesting_antigen_immunepos_ratio = 0.05
+  retesting_antibody_immunepos_ratio = 1.0
+  return_testsAvailable_remaining = false
+  distTestsSymp = distTestsSymp()
+end
+
+function (f::policyFunc_testing_massTesting_with_reTesting)(
+    stateTensor,
+    realTime,
+
+    # Test types (names correspoding to testSpecifications)
+    testTypes, # = ["PCR", "Antigen", "Antibody"],
+
+    # Test Capacity (dict with names above and numbers available on day t)
+    testsAvailable, # = trFunc_testCapacity(t)
+
+    # OPTIONAL ARGUMENTS (may be different for different policy functions, should come with defaults!)
+    basic_policyFunc = policyFunc_testing_symptomaticOnly(),
+    # This basic policy will:
+    # - do PCRs on symptomatic hospitalised people
+    # - do PCRs on symptomatic hospital staff
+    # - do PCRs on symptomatic non-hospitalised people
+    # If PCRs run out at any stage, we use antigen tests with same priorisation
+
+    # Afterwards given fractions of remaining antigen tests are distributed amongst people given these ratios and their earlier testing status:
+    #retesting_antigen_viruspos_ratio = 0.1, # find virus false positives
+    # UPDATE <- retesting viruspos is same ratio is normal testing, as long as they're not in quarantine already!
+    retesting_antigen_immunepos_ratio = 0.05, # find immunity false positives
+    # The rest of antigen tests are given out randomly
+
+    # Antibody tests are used primarily on people who tested positive for the virus
+    #  (set in basic_policyFunc!, use "virus_positive_only_hospworker_first"!)
+    # Afterwards we can use the remaining on either random people (dangerous with many false positives!)
+    # or for retesting people with already positive immune tests to make sure they're still immune,
+    # controlled by this ratio:
+    retesting_antibody_immunepos_ratio = 1.0,
+
+    #distributeRemainingToRandom = True, # TODO - otherwise stockpile for future, how?
+    return_testsAvailable_remaining = false;
+    kwargs...
+  )
+  f.basic_policyFunc = basic_policyFunc
+  f.retesting_antibody_immunepos_ratio = retesting_antibody_immunepos_ratio
+  f.retesting_antigen_immunepos_ratio = retesting_antigen_immunepos_ratio
+  f.return_testsAvailable_remaining = return_testsAvailable_remaining
+  kwargs_keys = keys(kwargs)
+  # if kwargs[:basic_policyFunc] != nothing
+  #   # Note here they have to pass an instance of the struct
+  #   f.basic_policyFunc = kwargs[:basic_policyFunc]
+  # end
+  if :retesting_antibody_immunepos_ratio in kwargs_keys
+    f.retesting_antibody_immunepos_ratio = kwargs[:retesting_antibody_immunepos_ratio]
+  end
+  if :retesting_antigen_immunepos_ratio in kwargs_keys
+    f.retesting_antigen_immunepos_ratio = kwargs[:retesting_antigen_immunepos_ratio]
+  end
+  if :return_testsAvailable_remaining in kwargs_keys
+    f.return_testsAvailable_remaining = kwargs[:return_testsAvailable_remaining]
+  end
+  # if kwargs[:distTestsSymp] != nothing
+  #   # Note here they have to pass an instance of the struct
+  #   f.distTestsSymp = kwargs[:distTestsSymp]
+  # end
+  # Output nAge x nHS x nIso x nTest x len(testTypes) tensor in py, reversed in jl
+  out_testRate = zeros((length(testTypes), size(stateTensor)...))
+
+  # First distribute tests to symptomatic people as usual:
+  # inpArgs change to not distributing tests randomly:
+  _basic_policyFunc = deepcopy(kwargs[:basic_policyFunc])
+  fieldvals = collect(_basic_policyFunc)
+  fieldvals[4] = false # distributeRemainingToRandom
+  fieldvals[5] = true  # return_testsAvailable_remaining
+  basic_policyFunc_params_modified = NamedTuple{keys(_basic_policyFunc)}(Tuple(fieldvals))
+  # Run the basic policy function with these modified parameters
+  out_testRate, testsAvailable = f.basic_policyFunc(
+    stateTensor,
+    realTime,
+    testTypes,
+    testsAvailable;
+    basic_policyFunc_params_modified...
+  )
+  beforeAntigen = out_testRate
+
+  # We assume PCRs tend to run out done on symptomatic people in 0 Test state, so no retesting via PCR.
+  # Antigen testing
+  # ---------------
+
+  # Retesting immune positive people
+  testRate, testsUsed = f.distTestsSymp(
+      stateTensor[3:end,:,1:end-1,:], # immune positive people
+      testsAvailable["Antigen"] * retesting_antigen_immunepos_ratio,
+      1.0, # set to 1. for ignoring symptom vs non-symptom
+  )
+
+  out_testRate[findfirst(x->x=="Antigen", testTypes),3:end,:,1:end-1,:] .+= testRate
+  testsAvailable["Antigen"] -= testsUsed
+  # Distribute antigen tests left over the other non-symptmatic populations
+  # UPDATE <- here we use tests equally distributed among people with negative or positive previous virus tests,
+  # as long as they are in non-quarantined state (isoState 0) # TODO - hospital worker testing???
+  testRate, testsUsed = f.distTestsSymp(
+    stateTensor[1:2, 1,1:end-1,:], # non-quarantined virus positive people
+    testsAvailable["Antigen"],
+    1.0,
+    f.distTestsSymp.symp_HS,
+    out_testRate[findfirst(x->x=="Antigen", testTypes), 1:2, 1,1:end-1,:] .+
+      out_testRate[findfirst(x->x=="PCR", testTypes), 1:2,1,1:end-1,:],
+  )
+  out_testRate[findfirst(x->x=="Antigen", testTypes), 1:2,1,1:end-1,:] .+= testRate
+  testsAvailable["Antigen"] -= testsUsed
+
+  # Antibody testing
+  # -----------------
+  # Retesting antibody positive people
+  testRate, testsUsed = f.distTestsSymp(
+    stateTensor[3:end,:,1:end-1,:], # virus positive people
+    testsAvailable["Antibody"]*retesting_antibody_immunepos_ratio,
+    1.0 # set to 1.0 for ignoring symptom vs non-symptom
+  )
+
+  # Afterwards let's just distribute randomly in the rest of the population
+  testRate, testsUsed = f.distTestsSymp(
+    stateTensor[1:2,:,1:end-1,:],
+    testsAvailable["Antibody"],
+    1.0, # basically people get antibody tested regardless of symptoms
+    f.distTestsSymp.symp_HS,
+    out_testRate[findfirst(x->x=="Antibody", testTypes),1:2,:,1:end-1,:]
+  )
+
+  out_testRate[findfirst(x->x=="Antibody", testTypes),1:2,:,1:end-1,:] .+= testRate
+  testsAvailable["Antibody"] -= testsUsed
+
+  if f.return_testsAvailable_remaining
     return out_testRate, testsAvailable
   end
 
-  return out_testRate
+  return out_testRate, beforeAntigen
 end

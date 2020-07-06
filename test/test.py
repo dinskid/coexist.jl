@@ -1095,4 +1095,148 @@ __policyFunc_testing_symptomaticOnly = policyFunc_testing_symptomaticOnly(
   **build_paramDict(policyFunc_testing_symptomaticOnly)
 )
 
-__policyFunc_testing_symptomaticOnly = np.transpose(__policyFunc_testing_symptomaticOnly)
+__policyFunc_testing_symptomaticOnly = np.transpose(
+                                        __policyFunc_testing_symptomaticOnly)
+
+basic_policyFunc_params_modified = build_paramDict(policyFunc_testing_symptomaticOnly)
+basic_policyFunc_params_modified["distributeRemainingToRandom"] = False
+basic_policyFunc_params_modified["return_testsAvailable_remaining"] = True
+
+__policyFunc_testing_symptomaticOnly_, _dd = policyFunc_testing_symptomaticOnly(
+  stateTensor,
+  py_rTime,
+  ["PCR", "Antigen", "Antibody"],
+  trFunc_testCapacity(py_rTime),
+  **basic_policyFunc_params_modified
+)
+__policyFunc_testing_symptomaticOnly_ = np.transpose(__policyFunc_testing_symptomaticOnly_)
+# print(__policyFunc_testing_symptomaticOnly_)
+
+# Define reTesting policy(s) (ie give tests to people in non-0 test states!)
+def policyFunc_testing_massTesting_with_reTesting(
+    stateTensor,
+    realTime,
+
+    # Test types (names correspoding to testSpecifications)
+    testTypes, # = ["PCR", "Antigen", "Antibody"],
+
+    # Test Capacity (dict with names above and numbers available on day t)
+    testsAvailable, # = trFunc_testCapacity(t)
+
+    # OPTIONAL ARGUMENTS (may be different for different policy functions, should come with defaults!)
+
+    basic_policyFunc = policyFunc_testing_symptomaticOnly,
+    # This basic policy will:
+    # - do PCRs on symptomatic hospitalised people
+    # - do PCRs on symptomatic hospital staff
+    # - do PCRs on symptomatic non-hospitalised people
+    # If PCRs run out at any stage, we use antigen tests with same priorisation
+
+    # Afterwards given fractions of remaining antigen tests are distributed amongst people given these ratios and their earlier testing status:
+    #retesting_antigen_viruspos_ratio = 0.1, # find virus false positives
+    # UPDATE <- retesting viruspos is same ratio is normal testing, as long as they're not in quarantine already!
+    retesting_antigen_immunepos_ratio = 0.05, # find immunity false positives
+    # The rest of antigen tests are given out randomly
+
+    # Antibody tests are used primarily on people who tested positive for the virus
+    #  (set in basic_policyFunc!, use "virus_positive_only_hospworker_first"!)
+    # Afterwards we can use the remaining on either random people (dangerous with many false positives!)
+    # or for retesting people with already positive immune tests to make sure they're still immune,
+    # controlled by this ratio:
+    retesting_antibody_immunepos_ratio = 1.,
+
+    #distributeRemainingToRandom = True, # TODO - otherwise stockpile for future, how?
+    return_testsAvailable_remaining = False,
+
+    **kwargs
+    ):
+
+    # Output nAge x nHS x nIso x nTest x len(testTypes) tensor
+    out_testRate = np.zeros(stateTensor.shape+(len(testTypes),))
+
+
+    # First distribute tests to symptomatic people as usual:
+
+    # inpArgs change to not distributing tests randomly:
+    basic_policyFunc_params_modified = copy.deepcopy(kwargs["basic_policyFunc_params"])
+    basic_policyFunc_params_modified["distributeRemainingToRandom"] = False
+    basic_policyFunc_params_modified["return_testsAvailable_remaining"] = True
+
+    # Run the basic policy function with these modified parameters
+    out_testRate, testsAvailable = basic_policyFunc(
+        stateTensor,
+        realTime = realTime,
+        testTypes = testTypes,
+        testsAvailable = testsAvailable,
+        **basic_policyFunc_params_modified
+    )
+    beforeAntigen = out_testRate
+
+    # We assume PCRs tend to run out done on symptomatic people in 0 Test state, so no retesting via PCR.
+
+
+    # Antigen testing
+    # ---------------
+
+    # Retesting immune positive people
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,:,2:], # immune positive people
+        testsAvailable = testsAvailable["Antigen"] * retesting_antigen_immunepos_ratio,
+        noncovid_sympRatio= 1., # set to 1. for ignoring symptom vs non-symptom
+    )
+
+    out_testRate[:,:-1,:,2:, testTypes.index("Antigen")] += testRate
+    testsAvailable["Antigen"] -= testsUsed
+
+
+    # Distribute antigen tests left over the other non-symptmatic populations
+    # UPDATE <- here we use tests equally distributed among people with negative or positive previous virus tests,
+    # as long as they are in non-quarantined state (isoState 0) # TODO - hospital worker testing???
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,0,:2], # non-quarantined virus positive people
+        testsAvailable = testsAvailable["Antigen"],
+        noncovid_sympRatio= 1.,
+        alreadyTestedRate= out_testRate[:,:-1,0,:2, testTypes.index("Antigen")] + out_testRate[:,:-1,0,:2, testTypes.index("PCR")]
+    )
+
+    out_testRate[:,:-1,0,:2, testTypes.index("Antigen")] += testRate
+    testsAvailable["Antigen"] -= testsUsed
+
+
+    # Antibody testing
+    # -----------------
+    # Retesting antibody positive people
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,:,2:], # virus positive people
+        testsAvailable = testsAvailable["Antibody"] * retesting_antibody_immunepos_ratio,
+        noncovid_sympRatio= 1., # set to 1. for ignoring symptom vs non-symptom
+    )
+
+
+    # Afterwards let's just distribute randomly in the rest of the population
+    testRate, testsUsed = distTestsSymp(
+        people = stateTensor[:,:-1,:,:2],
+        testsAvailable = testsAvailable["Antibody"],
+        noncovid_sympRatio= 1., # basically people get antibody tested regardless of symptoms
+        alreadyTestedRate= out_testRate[:,:-1,:,:2, testTypes.index("Antibody")]
+    )
+
+    out_testRate[:,:-1,:,:2, testTypes.index("Antibody")] += testRate
+    testsAvailable["Antibody"] -= testsUsed
+
+
+    if return_testsAvailable_remaining:
+        return out_testRate, testsAvailable
+
+    return out_testRate, beforeAntigen
+
+__policyFunc_testing_massTesting_with_reTesting, beforeAntigen = policyFunc_testing_massTesting_with_reTesting(
+    stateTensor,
+    py_rTime,
+    ["PCR", "Antigen", "Antibody"],
+    trFunc_testCapacity(py_rTime),
+    **build_paramDict(policyFunc_testing_massTesting_with_reTesting)
+)
+
+__policyFunc_testing_massTesting_with_reTesting = np.transpose(__policyFunc_testing_massTesting_with_reTesting)
+beforeAntigen = np.transpose(beforeAntigen)
