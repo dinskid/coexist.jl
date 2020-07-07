@@ -995,7 +995,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
 
   # Output nAge x nHS x nIso x nTest x len(testTypes) tensor in py
   out_testRate = zeros(length(testTypes), size(stateTensor)...) # len(testTypes) x nTest x nIso x nHS x nAge in jl
-
+  test = deepcopy(out_testRate)
   # Testing capacity is testsAvailable
 
   # Get sympom ratio. [0] - general, [1] - hospitalised
@@ -1073,7 +1073,19 @@ function (f::policyFunc_testing_symptomaticOnly)(
     out_testRate[findfirst(x->x=="PCR", testTypes),1,4,1:end-1,:]
   )
 
-  out_testRate[findfirst(x->x=="Antigen", testTypes),1,3,1:end-1,:] .+= testRate
+  out_testRate[findfirst(x->x=="Antigen", testTypes),1,4,1:end-1,:] .+= testRate
+  testsAvailable["Antigen"] -= testsUsed
+
+  # Distribute Antigen tests left over the other symptomatic people
+  testRate, testsUsed = f.distTestsSymp(
+    stateTensor[1,1:2,1:end-1,:],
+    testsAvailable["Antigen"],
+    cur_noncovid_sympRatio[1],
+    f.distTestsSymp.symp_HS,
+    out_testRate[findfirst(x->x=="PCR", testTypes), 1,1:2,1:end-1,:]
+  )
+
+  out_testRate[findfirst(x->x=="Antigen", testTypes), 1,1:2,1:end-1,:] .+= testRate
   testsAvailable["Antigen"] -= testsUsed
 
   if f.distributeRemainingToRandom
@@ -1244,7 +1256,7 @@ function (f::policyFunc_testing_massTesting_with_reTesting)(
     testsAvailable;
     basic_policyFunc_params_modified...
   )
-  beforeAntigen = out_testRate
+
 
   # We assume PCRs tend to run out done on symptomatic people in 0 Test state, so no retesting via PCR.
   # Antigen testing
@@ -1298,5 +1310,5 @@ function (f::policyFunc_testing_massTesting_with_reTesting)(
     return out_testRate, testsAvailable
   end
 
-  return out_testRate, beforeAntigen
+  return out_testRate
 end

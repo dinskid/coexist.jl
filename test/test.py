@@ -910,7 +910,7 @@ def policyFunc_testing_symptomaticOnly(
     Returns a rate distribution of available test types over age, health and isolation states
     (although age assumed not to matter here)
     """
-    
+
     # Output nAge x nHS x nIso x nTest x len(testTypes) tensor
     out_testRate = np.zeros(stateTensor.shape+(len(testTypes),))
 
@@ -1110,7 +1110,6 @@ __policyFunc_testing_symptomaticOnly_, _dd = policyFunc_testing_symptomaticOnly(
   **basic_policyFunc_params_modified
 )
 __policyFunc_testing_symptomaticOnly_ = np.transpose(__policyFunc_testing_symptomaticOnly_)
-# print(__policyFunc_testing_symptomaticOnly_)
 
 # Define reTesting policy(s) (ie give tests to people in non-0 test states!)
 def policyFunc_testing_massTesting_with_reTesting(
@@ -1170,7 +1169,7 @@ def policyFunc_testing_massTesting_with_reTesting(
         testsAvailable = testsAvailable,
         **basic_policyFunc_params_modified
     )
-    beforeAntigen = out_testRate
+
 
     # We assume PCRs tend to run out done on symptomatic people in 0 Test state, so no retesting via PCR.
 
@@ -1228,9 +1227,9 @@ def policyFunc_testing_massTesting_with_reTesting(
     if return_testsAvailable_remaining:
         return out_testRate, testsAvailable
 
-    return out_testRate, beforeAntigen
+    return out_testRate
 
-__policyFunc_testing_massTesting_with_reTesting, beforeAntigen = policyFunc_testing_massTesting_with_reTesting(
+__policyFunc_testing_massTesting_with_reTesting = policyFunc_testing_massTesting_with_reTesting(
     stateTensor,
     py_rTime,
     ["PCR", "Antigen", "Antibody"],
@@ -1239,4 +1238,3 @@ __policyFunc_testing_massTesting_with_reTesting, beforeAntigen = policyFunc_test
 )
 
 __policyFunc_testing_massTesting_with_reTesting = np.transpose(__policyFunc_testing_massTesting_with_reTesting)
-beforeAntigen = np.transpose(beforeAntigen)
