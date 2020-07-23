@@ -54,8 +54,8 @@ policyFunc_testing_symptomaticOnly = Coexist.policyFunc_testing_symptomaticOnly(
 
 _basic_policyFunc = Coexist.build_paramDict(Coexist.policyFunc_testing_symptomaticOnly())
 fieldvals = collect(_basic_policyFunc)
-fieldvals[4] = false # distributeRemainingToRandom
-fieldvals[5] = true  # return_testsAvailable_remaining
+fieldvals[end-1] = false # distributeRemainingToRandom
+fieldvals[end] = true  # return_testsAvailable_remaining
 basic_policyFunc_params_modified = NamedTuple{keys(_basic_policyFunc)}(Tuple(fieldvals))
 _policyFunc_testing_symptomaticOnly_ = py"__policyFunc_testing_symptomaticOnly_"
 policyFunc_testing_symptomaticOnly_, dd = Coexist.policyFunc_testing_symptomaticOnly()(

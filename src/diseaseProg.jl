@@ -5,16 +5,61 @@
 # but modify it such that old people have less favorable outcomes (as observed)
 # But correspondingly I want people at lower risk to have more favorable outcome on average
 
+## Regroup various age-group representations into our internal one, and vice versa
+function regroup_by_age(
+    inp, # first dimension is ages, others dont matter.
+    fromAgeSplits, toAgeSplits, maxAge=100.0, maxAgeWeight = 5.0
+  )
+  fromAgeSplits = vcat([0], fromAgeSplits, [maxAge]) # Add a zero at beginning for calculations
+  toAgeSplits = vcat([0], toAgeSplits, [maxAge]) # Add inf at end for calculations
+
+  function getOverlap(a, b)
+    return max(0, min(a[2], b[2]) - max(a[0], b[0]))
+  end
+
+  out = zeros((length(toAgeSplits)-1),size(inp)[2:end]...)
+  for from_ind in 2:length(fromAgeSplits)
+    # Redistribute to the new bins by calculating how many years in from_ind-1:from_ind falls into each output bin
+    cur_out_distribution = (
+      [getOverlap(toAgeSplits[cur_to_ind-1:cur_to_ind+1], fromAgeSplits[from_ind-1:from_ind+1]) for cur_to_ind in 2:length(toAgeSplits)]
+    )
+    if cur_out_distribution[end] > 0
+      cur_out_distribution[end] = maxAgeWeight # Define the relative number of ages if we have to distribute between second to last and last age groups
+    end
+    cur_out_distribution = cur_out_distribution / sum(cur_out_distribution)
+    for to_ind in 1:length(out)
+      out[to_ind] += cur_out_distribution[to_ind]*inp[from_ind-1]
+    end
+  end
+  return out
+end
+
 ## Build NamedTuple for params
 # TODO: Support for struct instances as kwargs
 istransparent(::Any) = false
 istransparent(::CType) = true
 
 build_paramDict(m) = build_paramDict(m, Val(istransparent(m)))
-build_paramDict(m, ::Val{false}) = m # Empty tuple (if no default args)
+build_paramDict(m, ::Val{false}) = () # Empty tuple (if no default args)
+# function build_paramDict(m, ::Val{true})
+#   fields = fieldnames(typeof(m))
+#   NamedTuple{fields}(Tuple([build_paramDict(getfield(m, field)) for field in fields]))
+# end
+
 function build_paramDict(m, ::Val{true})
   fields = fieldnames(typeof(m))
-  NamedTuple{fields}(Tuple([build_paramDict(getfield(m, field)) for field in fields]))
+  keys = []
+  vals = []
+  for f in fields
+    value = getfield(m, f)
+    push!(keys, f)
+    push!(vals, value)
+    if istransparent(value)
+      push!(keys, Symbol(String(f), "_params"))
+      push!(vals, build_paramDict(getfield(m, f)))
+    end
+  end
+  (; zip(keys, vals)...)
 end
 
 # For calculations see data_cleaning_py.ipynb, calculations from NHS England dataset as per 05 Apr
@@ -37,47 +82,47 @@ agePopulationTotal = 1000*[8044.056, 7642.473, 8558.707, 9295.024, 8604.251,
 
 
 function _agePopulationRatio(agePopulationTotal)
-    agePopulationTotal *= 55.98/66.27
-    return agePopulationTotal/sum(agePopulationTotal)
+  agePopulationTotal *= 55.98/66.27
+  return agePopulationTotal/sum(agePopulationTotal)
 end
 
 function einsum(str, a, b, T)
-    if str=="ijl,j->i"
-        return _einsum1(a, b, T)
-    elseif str=="ijk,j->ik"
-        return _einsum2(a, b, T)
-    elseif  str=="ijkl,j->i"
-        return _einsum3(a, b, T)
-    elseif  str=="ijkl,ijklmnp->imnp"
-        return _einsum5(a, b, T)
-    end
+  if str=="ijl,j->i"
+    return _einsum1(a, b, T)
+  elseif str=="ijk,j->ik"
+    return _einsum2(a, b, T)
+  elseif  str=="ijkl,j->i"
+    return _einsum3(a, b, T)
+  elseif  str=="ijkl,ijklmnp->imnp"
+    return _einsum5(a, b, T)
+  end
 end
 
 function einsum(str, a, T)
   if str=="ijlml->ijlm"
-      return _einsum4(a, T)
+    return _einsum4(a, T)
   elseif str=="ijkj->ijk"
-      return _einsum6(a, T)
+    return _einsum6(a, T)
   elseif str=="iklkl->ikl"
-      return _einsum7(a, T)
+    return _einsum7(a, T)
   elseif str=="ijljl->ijl"
-      return _einsum7(a, T)
+    return _einsum7(a, T)
   elseif str=="ijkljkm->ijklm"
-      return _einsum8(a, T)
+    return _einsum8(a, T)
   elseif str=="ijkljkl->ijkl"
-      return _einsum9(a, T)
+    return _einsum9(a, T)
   elseif str=="...jkl->..."
-      return _einsum10(a, T)
+    return _einsum10(a, T)
   end
 end
 
 function _einsum1(a, b, T) #'ijl,j->i'
-    i,_,j = size(a)
-    p = zeros(T,i,j)
-    for i=1:i, j=1:j
-		p[i,j] += dot(a[i,:,j], b)
-    end
-    return sum(p, dims=1)
+  i,_,j = size(a)
+  p = zeros(T,i,j)
+  for i=1:i, j=1:j
+    p[i,j] += dot(a[i,:,j], b)
+  end
+  return sum(p, dims=1)
 end
 
 function _einsum2(a, b, T) #'ijk,j->ik'
@@ -90,82 +135,98 @@ function _einsum2(a, b, T) #'ijk,j->ik'
 end
 
 function _einsum3(a, b, T) #'ijkl,j->i'
-    _,j,_,i = size(a)
-    p = zeros(T,j,i)
-    for i=1:i, j=1:j
-		p[j,i] += sum(a[:,j,:,i]*b)
-    end
-    return sum(p, dims=1)
+  _,j,_,i = size(a)
+  p = zeros(T,j,i)
+  for i=1:i, j=1:j
+	  p[j,i] += sum(a[:,j,:,i]*b)
+  end
+  return sum(p, dims=1)
 end
 
 function _einsum4(a, T) #'ijlml->ijlm'
-    l,m,l,j,i = size(a)
-    p = zeros(T,m,l,j,i)
-    for i=1:i, j=1:j, l=1:l
-        p[:,l,j,i] = a[l,:,l,j,i]
-    end
-    return p
+  l,m,l,j,i = size(a)
+  p = zeros(T,m,l,j,i)
+  for i=1:i, j=1:j, l=1:l
+    p[:,l,j,i] = a[l,:,l,j,i]
+  end
+  return p
 end
 
 function _einsum12(a, b, T) # for setting the values in einsum 4
 	l,m,l,j,i = size(a)
 	for i=1:i, j=1:j, l=1:l
-        a[l,:,l,j,i] = b[:,l,j,i]
-    end
-    return a
+    a[l,:,l,j,i] = b[:,l,j,i]
+  end
+  return a
 end
 
 function _einsum5(a, b, T) #'ijkl,ijklmnp->imnp'
-    p, n, m, l, k, j, i = size(b)
-    dydt = zeros(T,p,n,m,i)
-    for i=1:i, j=1:j, k=1:k, l=1:l, m=1:m, n=1:n, p=1:p
-        dydt[p,n,m,i] += a[l,k,j,i] * b[p,n,m,l,k,j,i]
-    end
-    return dydt
+  p, n, m, l, k, j, i = size(b)
+  dydt = zeros(T,p,n,m,i)
+  for i=1:i, j=1:j, k=1:k, l=1:l, m=1:m, n=1:n, p=1:p
+    dydt[p,n,m,i] += a[l,k,j,i] * b[p,n,m,l,k,j,i]
+  end
+  return dydt
 end
 
 function _einsum6(a, T) # 'ijkj->ijk'
-    _,k,j,i = size(a)
-    p = zeros(T,k,j,i)
-    for j=1:j, i=1:i
-        p[:,j,i] = a[j,:,j,i]
-    end
-    return p
+  _,k,j,i = size(a)
+  p = zeros(T,k,j,i)
+  for j=1:j, i=1:i
+    p[:,j,i] = a[j,:,j,i]
+  end
+  return p
+end
+
+function _einsum13(a, b, T) # for setting values of einsum 6
+  _,k,j,i = size(a)
+  for j=1:j, i=1:i
+    a[:,j,i] = b[j,:,j,i]
+  end
+  return a
 end
 
 function _einsum7(a, T) # 'ijljl->ijl' & 'iklkl->ikl'
-    _,_,l,k,i = size(a)
-    p = zeros(T,l,k,i)
-    for i=1:i, k=1:k, l=1:l
-        p[l,k,i] = a[l,k,l,k,i]
-    end
-    return p
+  _,_,l,k,i = size(a)
+  p = zeros(T,l,k,i)
+  for i=1:i, k=1:k, l=1:l
+    p[l,k,i] = a[l,k,l,k,i]
+  end
+  return p
+end
+
+function _einsum14(a, b, T) # for setting values of einsum 7
+  _,_,l,k,i = size(a)
+  for i=1:i, k=1:k, l=1:l
+    a[l,k,i] = b[l,k,l,k,i]
+  end
+  return a
 end
 
 function _einsum8(a, T) # 'ijkljkm->ijklm'
-    m,_,_,l,k,j,i = size(a)
-    p = zeros(T,m,l,k,j,i)
-    for i=1:i, j=1:j, k=1:k, l=1:l, m=1:m
-        p[m,l,k,j,i] = a[m,k,j,l,k,j,i]
-    end
-    return p
+  m,_,_,l,k,j,i = size(a)
+  p = zeros(T,m,l,k,j,i)
+  for i=1:i, j=1:j, k=1:k, l=1:l, m=1:m
+    p[m,l,k,j,i] = a[m,k,j,l,k,j,i]
+  end
+  return p
 end
 
 function _einsum9(a, T) # 'ijkljkl->ijkl'
-    _,_,_,l,k,j,i = size(a)
-    p = zeros(T,l,k,j,i)
-    for i=1:i, j=1:j, k=1:k, l=1:l
-        p[l,k,j,i] = a[l,k,j,l,k,j,i]
-    end
-    return p
+  _,_,_,l,k,j,i = size(a)
+  p = zeros(T,l,k,j,i)
+  for i=1:i, j=1:j, k=1:k, l=1:l
+    p[l,k,j,i] = a[l,k,j,l,k,j,i]
+  end
+  return p
 end
 
 function _einsum11(a, b, T) # for setting the values in einsum 10
 	_,_,_,l,k,j,i = size(a)
-    for i=1:i, j=1:j, k=1:k, l=1:l
-        a[l,k,j,l,k,j,i] = b[l,k,j,i]
-    end
-    return a
+  for i=1:i, j=1:j, k=1:k, l=1:l
+    a[l,k,j,l,k,j,i] = b[l,k,j,i]
+  end
+  return a
 end
 
 function _einsum10(a, T) # '...jkl->...'
@@ -972,17 +1033,16 @@ function (f::policyFunc_testing_symptomaticOnly)(
   if :antibody_testing_policy in kwargs_keys
     f.antibody_testing_policy = kwargs[:antibody_testing_policy]
   end
-  # if kwargs[:f_symptoms_nonCOVID] != nothing
-  #   # Note here they have to pass an instance of the struct
-  #   f.f_symptoms_nonCOVID = kwargs[:f_symptoms_nonCOVID_params]
-  # end
-  # if kwargs[:distTestsSymp] != nothing
-  #   # Note here they have to pass an instance of the struct
-  #   f.distTestsSymp = kwargs[:distTestsSymp]
-  # end
+  if kwargs[:f_symptoms_nonCOVID] != nothing
+    # Note here they have to pass an instance of the struct
+    f.f_symptoms_nonCOVID = kwargs[:f_symptoms_nonCOVID]
+  end
+  if kwargs[:distTestsSymp] != nothing
+    # Note here they have to pass an instance of the struct
+    f.distTestsSymp = typeof(kwargs[:distTestsSymp])()
+  end
   if :distributeRemainingToRandom in kwargs_keys
     f.distributeRemainingToRandom = kwargs[:distributeRemainingToRandom]
-    println(kwargs[:distributeRemainingToRandom], ' ', f.distributeRemainingToRandom)
   end
   if :return_testsAvailable_remaining in kwargs_keys
     f.return_testsAvailable_remaining = kwargs[:return_testsAvailable_remaining]
@@ -999,7 +1059,7 @@ function (f::policyFunc_testing_symptomaticOnly)(
   # Testing capacity is testsAvailable
 
   # Get sympom ratio. [0] - general, [1] - hospitalised
-  cur_noncovid_sympRatio = f.f_symptoms_nonCOVID(realTime; kwargs[:f_symptoms_nonCOVID]...)
+  cur_noncovid_sympRatio = f.f_symptoms_nonCOVID(realTime; kwargs[:f_symptoms_nonCOVID_params]...)
 
   # PCR testing
   # -----------
@@ -1221,10 +1281,10 @@ function (f::policyFunc_testing_massTesting_with_reTesting)(
   f.retesting_antigen_immunepos_ratio = retesting_antigen_immunepos_ratio
   f.return_testsAvailable_remaining = return_testsAvailable_remaining
   kwargs_keys = keys(kwargs)
-  # if kwargs[:basic_policyFunc] != nothing
-  #   # Note here they have to pass an instance of the struct
-  #   f.basic_policyFunc = kwargs[:basic_policyFunc]
-  # end
+  if kwargs[:basic_policyFunc] != nothing
+    # Note here they have to pass an instance of the struct
+    f.basic_policyFunc = typeof(kwargs[:basic_policyFunc])()
+  end
   if :retesting_antibody_immunepos_ratio in kwargs_keys
     f.retesting_antibody_immunepos_ratio = kwargs[:retesting_antibody_immunepos_ratio]
   end
@@ -1234,19 +1294,19 @@ function (f::policyFunc_testing_massTesting_with_reTesting)(
   if :return_testsAvailable_remaining in kwargs_keys
     f.return_testsAvailable_remaining = kwargs[:return_testsAvailable_remaining]
   end
-  # if kwargs[:distTestsSymp] != nothing
-  #   # Note here they have to pass an instance of the struct
-  #   f.distTestsSymp = kwargs[:distTestsSymp]
-  # end
+  if kwargs[:distTestsSymp] != nothing
+    # Note here they have to pass an instance of the struct
+    f.distTestsSymp = typeof(kwargs[:distTestsSymp])()
+  end
   # Output nAge x nHS x nIso x nTest x len(testTypes) tensor in py, reversed in jl
   out_testRate = zeros((length(testTypes), size(stateTensor)...))
 
   # First distribute tests to symptomatic people as usual:
   # inpArgs change to not distributing tests randomly:
-  _basic_policyFunc = deepcopy(kwargs[:basic_policyFunc])
+  _basic_policyFunc = deepcopy(kwargs[:basic_policyFunc_params])
   fieldvals = collect(_basic_policyFunc)
-  fieldvals[4] = false # distributeRemainingToRandom
-  fieldvals[5] = true  # return_testsAvailable_remaining
+  fieldvals[end-1] = false # distributeRemainingToRandom
+  fieldvals[end] = true  # return_testsAvailable_remaining
   basic_policyFunc_params_modified = NamedTuple{keys(_basic_policyFunc)}(Tuple(fieldvals))
   # Run the basic policy function with these modified parameters
   out_testRate, testsAvailable = f.basic_policyFunc(
@@ -1311,4 +1371,105 @@ function (f::policyFunc_testing_massTesting_with_reTesting)(
   end
 
   return out_testRate
+end
+
+@with_kw mutable struct trFunc_quarantine_caseIsolation
+  nDaysInHomeIsolation = 14.0
+  timeToIsolation = 0.5 # (days) time from testing positive to actually getting isolated
+  # On average this many people get hospitalised (compared to home isolation), but modulated by age (TODO: values > 1? clip for now..)
+  symptomHospitalisedRate_ageAdjusted =
+    clamp.(adjustRatesByAge_KeepAverageRate()(0.3,
+    relativeAdmissionRisk_given_COVID_by_age), 0.0, 1.0)
+  symptomaticHealthStates = [3,4] # TODO - define this in global variable and just pass here!
+end
+
+function (f::trFunc_quarantine_caseIsolation)(
+    trTensor_complete,
+    t,
+    trTensor_testing, # This is used to establish who gets tests and how many of those end up positive.
+    nDaysInHomeIsolation = 14.0,
+    timeToIsolation = 0.5, # (days) time from testing positive to actually getting isolated
+    # On average this many people get hospitalised (compared to home isolation), but modulated by age (TODO: values > 1? clip for now..)
+    symptomHospitalisedRate_ageAdjusted = clamp.(
+      adjustRatesByAge_KeepAverageRate(0.3, ageRelativeAdjustment=relativeAdmissionRisk_given_COVID_by_age),
+      0.0,1.0
+    );
+    kwargs...
+  )
+  """
+  This function redistributes testing rates, so they dont only create a testing state update, but also an isolation state update
+  """
+  trTensor_quarantineRate = zeros((nIso, size(stateTensor)...))
+  trTensor_freshlyVirusPositiveRate_inIso0 = deepcopy(trTensor_testing[2,1:2,1,:,:])
+  trTensor_freshlyBothPositiveRate_inIso0 = deepcopy(trTensor_testing[4,3:end,1,:,:])
+
+  for curHS in 1:size(stateTensor)[2] # ignore dead
+    if curHS in symptomaticHealthStates
+      # Send a fraction of people (normal) who are symptomatic and tested positive to hospital, based on their age
+      ssize = size(symptomHospitalisedRate_ageAdjusted)
+      _symptomHospitalisedRate_ageAdjusted = reshape(
+        symptomHospitalisedRate_ageAdjusted, ssize[1:end-1], 1, ssize[end]
+      )
+      trTensor_quarantineRate[3,1:2,1,curHS,:] .+= (
+        (1.0/timeToIsolation).*(_symptomHospitalisedRate_ageAdjusted).*
+        trTensor_freshlyVirusPositiveRate_inIso0[curHS,:]
+      )
+      trTensor_quarantineRate[3,3:end,1,curHs,:] .+= (
+        (1.0/timeToIsolation).*(_symptomHospitalisedRate_ageAdjusted).*
+        trTensor_freshlyBothPositiveRate_inIso0[curHS,:]
+      )
+      # The rest to home isolation
+      trTensor_quarantineRate[2,1:2,1,curHS,:] .+= (
+        (1.0/timeToIsolation).*(_symptomHospitalisedRate_ageAdjusted).*
+        trTensor_freshlyVirusPositiveRate_inIso0[curHS,:]
+      )
+      trTensor_quarantineRate[2,3:end,1,curHS,:] .+= (
+        (1.0/timeToIsolation).*(_symptomHospitalisedRate_ageAdjusted).*
+        trTensor_freshlyBothPositiveRate_inIso0[curHS,:]
+      )
+    else
+      # Send all non-symptomatic (normal) who tested freshly positive to home isolation
+      trTensor_quarantineRate[2,1:2,1,curHs,:] .+= (
+        1.0/timeToIsolation .* trTensor_freshlyVirusPositiveRate_inIso0[curHS,:]
+      )
+      trTensor_quarantineRate[2,3:end,1,curHS,:] .+= (
+        1.0/timeToIsolation .* trTensor_freshlyBothPositiveRate_inIso0[curHS,:]
+      )
+    end
+  end
+  # Release people from home isolation after isolation period
+  trTensor_quarantineRate[1,:,2,:,:] = 1.0/nDaysInHomeIsolation
+
+  # Hospitalised people are assumed to be released after recovery, with normal rates (TODO: think if this is correct)
+
+  # TODO!!! - importantly, hospital workers are not being home isolated / hospitalised under this policy.
+  # How to keep track of hospital workers who get hospitalised or home isolated themselves,
+  # such that they get back to being hospital workers afterwards?
+  # A simple (slightly incorrect) solution would be to just implement a non-specific "pull" from isoState=0 people to hospital workers to fill up the missing people?
+  # But the rate of this pull would be impossible to compute and would still be incorrect. Gotta think more on this.
+
+
+  # Update the whole tensor accordingly
+  # Make a copy for safety:
+  out_trTensor_complete = deepcopy(trTensor_complete)
+
+  # First remove all the iso 0->0, test 0,1->1, 2,3->3 transitions (as they're all either hospitalised or sent to home isolation)
+  out_trTensor_complete[2,1,:,1:2,1,:,:] = 0.0
+  out_trTensor_complete[4,1,:,3:end,1,:,:] = 0.0
+
+  # Newly virus positive, newly home-isolated, diagonal in disease state transition
+  _einsum13(out_trTensor_complete[2,2,:,1:2,1,:,:], trTensor_quarantineRate[2,1:2,1,:,:])
+  _einsum13(out_trTensor_complete[4,2,:,3:end,1,:,:], trTensor_quarantineRate[2,3:end,1,:,:])
+
+  # Newly virus positive, newly hospitalised, diagonal in disease state transition
+  _einsum13(out_trTensor_complete[2,3,:,1:2,1,:,:], trTensor_quarantineRate[3,1:2,1,:,:])
+  _einsum13(out_trTensor_complete[4,3,:,3:end,:,:], trTensor_quarantineRate[3,3:end,1,:,:])
+
+  # Home isolated people are "let go" after nDaysInHomeIsolation, without changing disease or testing state
+  # (TODO: represent multiple testing / needing negative tests to let go, etc - hard problem!)
+  # (UPDATE: multiple testing have now been represented, but for now we'll still let go people based on fixed time rather than negative test, to save tests!)
+  _einsum14(out_trTensor_complete[:,1,:,:,2,:,:], trTensor_quarantineRate[1,:,2,:,:])
+
+  # Return the full updated tensor (so NOT += outside, but actually =)
+  return out_trTensor_complete
 end
